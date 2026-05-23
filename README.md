@@ -1,9 +1,9 @@
 # 🚗 Uber-Style Ride Sharing Platform
 
-> A production-grade, event-driven microservices backend that replicates the core of Uber's ride dispatch system — ride requesting, geospatial driver matching, and real-time location tracking — built with Spring Boot, Apache Kafka, Redis GEO, and OpenFeign.
+> A production-grade, event-driven microservices backend that replicates the core of Uber's ride dispatch system — ride requesting, geospatial driver matching, and real-time location tracking — built with Spring Boot 4, Apache Kafka, Redis GEO, and OpenFeign.
 
-![Java](https://img.shields.io/badge/Java-17+-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.x-6DB33F?style=for-the-badge&logo=spring&logoColor=white)
+![Java](https://img.shields.io/badge/Java_26-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot_4.0-6DB33F?style=for-the-badge&logo=spring&logoColor=white)
 ![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-KRaft-231F20?style=for-the-badge&logo=apachekafka&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis_GEO-Location-DC382D?style=for-the-badge&logo=redis&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
@@ -82,25 +82,28 @@ Uber-Ride/
 │   └── src/main/java/com/rideshare/rideservice/
 │       ├── controller/RideController.java       # REST endpoints
 │       ├── service/RideService.java             # Business logic + Haversine
+│       ├── service/RideEventConsumer.java       # Kafka listener for ride.matched
 │       ├── model/Ride.java                      # JPA entity
 │       ├── model/RideStatus.java               # Status enum
 │       ├── event/RideRequestedEvent.java        # Kafka event (published)
+│       ├── event/RideMatchedEvent.java          # Kafka event (consumed)
 │       ├── repository/RideRepository.java
-│       ├── config/KafkaConfig.java             # Topic declarations
+│       ├── config/KafkaConfig.java             # Topic declarations (ride.requested, ride.matched)
 │       └── exception/GlobalExceptionHandler.java
 │
 ├── location-service/                    # Port 8082 — Redis GEO tracking
 │   └── src/main/java/com/rideshare/locationservice/
 │       ├── controller/LocationController.java   # Update / nearby / remove
 │       ├── service/LocationService.java         # Redis GEO operations
-│       ├── config/RedisConfig.java             # RedisTemplate setup
+│       ├── config/RedisConfig.java             # RedisTemplate<String, String> setup
 │       └── dto/DriverLocationRequest.java
 │
 └── matching-service/                    # Port 8084 — driver assignment
     └── src/main/java/com/rideshare/matchingservice/
         ├── service/MatchingService.java         # Scoring algorithm
-        ├── service/RideEventConsumer.java       # Kafka listener
-        ├── client/LocationServiceClient.java    # Feign client
+        ├── service/RideEventConsumer.java       # @KafkaListener on ride.requested
+        ├── client/LocationServiceClient.java    # Feign client → Location Service
+        ├── event/RideRequestedEvent.java        # Kafka event (consumed)
         └── event/RideMatchedEvent.java          # Kafka event (published)
 ```
 
@@ -154,7 +157,7 @@ MatchingService.matchDriverForRide():
 ### Phase 3 — Ride Service confirms the match
 
 ```
-RideService (Kafka consumer for ride.matched):
+RideEventConsumer (ride-service) consumes ride.matched:
   ride.driverId = assignedDriver.driverId
   ride.status   = ACCEPTED
   → saved to PostgreSQL
@@ -290,6 +293,8 @@ In production, `driverRating` would be fetched from a dedicated Driver Service. 
   CANCELLED ← can occur from REQUESTED, MATCHING, or ACCEPTED
 ```
 
+> The `DRIVER_ARRIVING` status is defined in the enum and reserved for a future extension (e.g. a WebSocket push when the driver is within 500 m of pickup).
+
 ---
 
 ## 📡 API Reference
@@ -323,8 +328,8 @@ The Matching Service exposes no public REST endpoints. It operates entirely via 
 
 ### Prerequisites
 
-- Java 17+
-- Maven 3.8+
+- Java 26
+- Maven 3.9+
 - Docker and Docker Compose
 - Redis (running locally on port 6379)
 - PostgreSQL (running locally on port 5432)
@@ -357,7 +362,7 @@ spring:
 ### 4. Start all services
 
 ```bash
-# Terminal 1
+# Terminal 1 — start Location Service first (Matching Service depends on it)
 cd location-service && ./mvnw spring-boot:run
 
 # Terminal 2
@@ -435,18 +440,20 @@ location:
 
 ## 🛠️ Tech Stack
 
-| Technology | Purpose |
-|---|---|
-| Spring Boot 3.x | Microservice framework |
-| Spring Kafka | Kafka producer/consumer |
-| Spring Data Redis | Redis GEO operations (`GEOADD`, `GEORADIUS`, `ZREM`) |
-| Spring Data JPA | PostgreSQL ORM (ride persistence) |
-| Spring Cloud OpenFeign | Declarative HTTP client (Matching → Location) |
-| Apache Kafka (KRaft) | Async event streaming between services |
-| Redis | Real-time driver location store (geospatial sorted set) |
-| PostgreSQL | Persistent ride records |
-| Lombok | Boilerplate reduction |
-| Docker Compose | Kafka container orchestration |
+| Technology | Version | Purpose |
+|---|---|---|
+| Spring Boot | 4.0.6 | Microservice framework |
+| Java | 26 | Runtime |
+| Spring Kafka | (Boot-managed) | Kafka producer/consumer |
+| Spring Data Redis | (Boot-managed) | Redis GEO operations (`GEOADD`, `GEORADIUS`, `ZREM`) |
+| Spring Data JPA | (Boot-managed) | PostgreSQL ORM (ride persistence) |
+| Spring Cloud OpenFeign | 5.0.1 | Declarative HTTP client (Matching → Location) |
+| Spring Cloud | 2025.1.1 | BOM for Feign and related modules |
+| Apache Kafka | KRaft mode | Async event streaming between services |
+| Redis | — | Real-time driver location store (geospatial sorted set) |
+| PostgreSQL | — | Persistent ride records |
+| Lombok | (Boot-managed) | Boilerplate reduction |
+| Docker Compose | — | Kafka container orchestration |
 
 ---
 
@@ -458,6 +465,7 @@ location:
 - **Haversine without a Maps API** — fare estimation happens at request time with no external dependency. The Haversine formula is accurate enough for short urban distances (error < 0.3% under 100 km) and adds zero latency overhead.
 - **Weighted scoring, not just proximity** — a pure nearest-driver algorithm is naive. The 70/30 distance/rating split prevents consistently penalising high-quality drivers who are slightly further. In production this extends naturally to add vehicle type, acceptance rate, and surge pricing factors.
 - **Stateless location updates** — `GEOADD` on an existing Redis member is an upsert. Drivers can call the update endpoint every 3 seconds without any state management — the service just fires and forgets into the Redis sorted set.
+- **KRaft — no ZooKeeper** — Kafka runs in KRaft mode (`KAFKA_PROCESS_ROLES: broker,controller`), eliminating the ZooKeeper dependency entirely. One container instead of two, faster startup, simpler local dev.
 
 ---
 
@@ -469,7 +477,7 @@ location:
 - [ ] Add **Spring Security + JWT** authentication for rider and driver endpoints
 - [ ] Use **Spring Cloud Eureka** for service discovery so Feign resolves `location-service` by name instead of hardcoded URL
 - [ ] Add a **dead letter topic** for failed `ride.requested` events that the Matching Service couldn't process
-- [ ] Implement `DRIVER_ARRIVING` status with a WebSocket push to the rider when the driver is within 500m
+- [ ] Implement `DRIVER_ARRIVING` status (already in the enum) with a WebSocket push to the rider when the driver is within 500 m
 - [ ] Add **distributed tracing** (Micrometer + Zipkin) to trace a ride request across all three services
 
 ---

@@ -24,7 +24,7 @@ This project implements the core backend pipeline of a ride-sharing platform. A 
 ---
 
 ## 🏗️ Architecture
-
+![Architecture](uber_hld.png)
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              RIDER / DRIVER                                 │
